@@ -1,0 +1,348 @@
+# docker-compose for all my stuff
+
+version: '3'
+
+services:
+
+  duckdns:
+    container_name: DuckDNS
+    image: linuxserver/duckdns
+    # depends_on:
+      # - letsencrypt
+      # - home-assistant
+    ports:
+      - 8080:80
+    environment:
+      - PUID=1000
+      - PGID=1004
+      - SUBDOMAINS=*****YOUR_DUCKDNS_SUBDOAIN*****
+      - TOKEN=*****YOUR_DUCKDNS_TOKEN*****
+
+  letsencrypt:
+    image: linuxserver/letsencrypt
+    container_name: letsencrypt
+    volumes:
+      - /home/aephir/docker/letsencrypt/config:/config
+      - /etc/localtime:/etc/localtime:ro
+      # - /etc/letsencrypt:/config
+    ports:
+      - 80:80
+      - 443:443
+    # depends_on:
+    #   - duckdns
+    environment:
+      - PUID=1000
+      - PGID=1004
+      - EMAIL=*****YOUREMAIL*****
+      - TZ=*****YOURTIMEZONE*****
+      - URL=*****YOUR_DUCKDNS_ADDRESS*****
+      - SUBDOMAINS=hass,dash # change or add. This will be the sub-sub-domain. E.g. if you use duckdns, and have example.duckdns.org, this will let yo use hass.example.duckdns.org and dash.example.duckdns.org
+      - DHLEVEL=4096
+      - VALIDATION=http
+      # - STAGING=true # Have this uncommented while setting up to avoid the letsencrypt certificate limit if you screw it up a few times. Remove once you have this set up correctly to get working certificates.
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+  mqtt:
+    image: eclipse-mosquitto:latest
+    container_name: "MQTT"
+    restart: always
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - /home/$USER/docker/mosqiutto/data:/mosquitto/data
+      - /home/$USER/docker/mosqiutto/config:/mosquitto/config
+      - /home/$USER/docker/mosqiutto/log:/mosquitto/log
+    network_mode: "host"
+
+  # mqtt: # https://github.com/2bytes/mosquitto-docker - This doesn't work? No image available??
+  #   container_name: mqtt
+  #   build: .
+  #   image: 2bytes/mqtt:1.0.2
+  #   ports:
+  #     - "1883:1883"
+  #     - "2883:2883"
+  #     - "127.0.0.1:3883:3883"
+  #   volumes:
+  #     - /home/aephir/docker/mqtt:/var/lib/mosquitto
+
+  # mqtt: # https://philhawthorne.com/setting-up-a-local-mosquitto-server-using-docker-for-mqtt-communication/
+  #   container_name: mosquitto
+  #   restart: always
+  #   network_mode: "host"
+  #   volumes:
+  #     - /home/aephir/docker/mqtt/config:/mqtt/config:ro
+  #     - /home/aephir/docker/mqtt/log:/mqtt/log
+  #     - /home/aephir/docker/mqtt/data/:/mqtt/data/
+  #   image: toke/mosquitto
+
+  home-assistant:
+    image: homeassistant/home-assistant:latest
+    container_name: "hass"
+    restart: always
+    depends_on:
+      # - influxdb
+      - mqtt
+      # - letsencrypt
+      # - mariadb
+    ports:
+      - "8123:8123"
+    volumes:
+      - /home/aephir/docker/homeassistant:/config
+    network_mode: "host"
+    devices:
+      # This needs to be adjusted depending on your z-wave controller type.
+      # /dev/ttyAMA0 or /dev/ttyACM0 for GPIO-ish controller
+      # /dev/ttyUSB0 for the usual USB type controller
+      - "/dev/ttyACM0:/dev/ttyACM0"
+
+# MariaDB for docker-compose version 3.4 - https://github.com/mybb/docker-compose/blob/master/docker-compose.yml.mariadb.example
+  mariadb:
+    image: mariadb:10.2
+    container_name: mariadb
+    environment:
+      MYSQL_ROOT_PASSWORD: *****YOUR_MARIADB_PASSWORD*****
+      MYSQL_DATABASE: *****YOUR_DATABASE_NAME*****
+      MYSQL_USER: *****YOUR_USERNAME*****
+      MYSQL_PASSWORD: *****YOUR_PASSWORD*****
+#    logging:
+#      driver: syslog
+#      options:
+#        tag: "{{.DaemonName}}(image={{.ImageName}};name={{.Name}};id={{.ID}})"
+    # networks:
+    #   - backend
+    restart: on-failure
+    volumes:
+     - /home/aephir/docker/mariadb:/var/lib/mysql
+
+  syncthing:
+    container_name: syncthing
+    restart: unless-stopped
+    image: linuxserver/syncthing
+    volumes:
+      - /home/aephir/docker/syncthing:/config
+      - /home/aephir/docker/hass-config:/sync
+      - /etc/localtime:/etc/localtime:ro
+    network_mode: host
+    environment:
+      - PGID=1004
+      - PUID=1000
+
+  appdaemon:
+    container_name: appdaemon
+    restart: unless-stopped
+    image: acockburn/appdaemon:latest
+    depends_on:
+      - home-assistant
+    volumes:
+      - /home/aephir/docker/homeassistant:/conf
+      - /home/aephir/docker/appdaemon:/logs
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - HA_URL="http://192.168.0.100:8123"
+      - DASH_URL="http://192.168.0.100:5050"
+    ports:
+      - "5050:5050"
+    network_mode: host
+
+  hadockermon:
+    container_name: ha-dockermon
+    restart: unless-stopped
+    image: philhawthorne/ha-dockermon
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/aephir/docker/ha-dockermon:/config
+    ports:
+      - "8126:8126"
+
+  portainer:
+    container_name: portainer
+    restart: unless-stopped
+    image: portainer/portainer
+    volumes:
+      - /home/aephir/docker/portainer:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "9005:9005"
+
+# https://github.com/wemake-services/caddy-docker
+  # caddy:
+  #   container_name: caddy
+  #   image: abiosoft/caddy
+  #   volumes:
+  #     - /home/aephir/docker/caddy:/root/.caddy  # to save certificates on disk
+  #     - /home/aephir/docker/caddyCaddyfile:/etc/Caddyfile  # to mount custom Caddyfile
+  #   ports:
+  #     - "2015:2015"
+  #     - "80:80"
+  #     - "443:443"
+
+  influxdb:
+    image: influxdb
+    container_name: influxdb
+    restart: unless-stopped
+    # networks:
+    #   backend:
+    #     ipv4_address: 172.92.92.93
+    volumes:
+      - /home/aephir/docker/influxdb:/var/lib/influxdb
+    ports:
+      - 8086:8086
+#     env_file:
+# #      - INFLUXDB_DATA_QUERY_LOG_ENABLED=false
+# #      - INFLUXDB_HTTP_AUTH_ENABLED=true
+# #      - INFLUXDB_HTTP_LOG_ENABLED=false
+#       - influxdb.env
+# #      - INFLUXDB_ADMIN_ENABLED=true
+
+#   grafana:
+#     image: grafana/grafana
+#     container_name: grafana
+#     restart: unless-stopped
+#     depends_on:
+#       - influxdb
+#     volumes:
+#       - /home/aephir/docker/grafana:/var/lib/grafana
+#       - /etc/localtime:/etc/localtime:ro
+#     ports:
+#       - 3001:3000/tcp
+#     # networks:
+#     #   backend:
+#     #     ipv4_address: 172.92.92.94
+#     env_file:
+#       - grafana.env
+#     labels:
+#       - "traefik.enable=true"
+#       - "traefik.backend=grafana"
+#       - "traefik.frontend.rule=Host:graphs.home.comreset.io"
+#       - "traefik.port=3000"
+
+  nodered:
+    image: nodered/node-red-docker:v8
+    container_name: nodered
+    restart: unless-stopped
+    depends_on:
+      - home-assistant
+    ports:
+      - 1880:1880
+      - 9229:9229
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /home/aephir/docker/nodered:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.backend=nodered"
+      - "traefik.frontend.rule=Host:nodered.home.comreset.io"
+      - "traefik.port=1880"
+    links:
+      - mqtt
+
+  home-panel:
+    image: timmo001/home-panel
+    depends_on:
+      - home-assistant
+    restart: unless-stopped
+    environment:
+      REACT_APP_HASS_HOST: *****YOUR_DUCKDNS_ADDRESS*****
+      REACT_APP_HASS_PASSWORD: '*****YOUR_PASSWORD*****'
+      REACT_APP_HASS_SSL: 'true'
+      REACT_APP_API_URL: https://localhost:3234
+    ports:
+      - 8234:443
+    volumes:
+      - ~/ssl:/ssl
+      - /home/aephir/docker/home-panel/config.json:/usr/src/app/config.json
+  home-panel-api:
+    image: timmo001/home-panel-api
+    environment:
+      CERTIFICATES_DIR: /ssl
+    ports:
+      - 3234:3234
+    volumes:
+      - /etc/letsencrypt/etc/letsencrypt/live/*****YOUR_DUCKDNS_ADDRESS*****/:/ssl
+
+  # vlc: #https://hub.docker.com/r/chrisdaish/vlc/
+  #   image: chrisdaish/vlc
+  #   restart: unless_stopped
+  #   environment:
+  #     uid=$(id -u)
+  #     gid=$(id -g)
+  #     DISPLAY=unix$DISPLAY
+  #   volumes:
+  #     - /home/aephir/docker/vlc/Documents:/home/vlc/Documents:rw
+  #     - /home/aephir/docker/vlc/config/vlcrc:/home/vlc/.config/vlc/vlcrc:ro
+  #     - /dev/snd:/dev:snd
+  #   privileged: true
+
+  # pihole:
+  #   image: pihole/pihole:latest
+  #   ports:
+  #     - "53:53/tcp"
+  #     - "53:53/udp"
+  #     - "67:67/udp"
+  #     - "80:80/tcp"
+  #     - "443:443/tcp"
+  #   environment:
+  #     # enter your docker host IP here
+  #     ServerIP: "${IP}" # find the IP and enter it? Or use network_mode: host?
+  #     # IPv6 Address if your network supports it
+  #     #ServerIPv6: 192.168.1.55
+  #     # jwilder/proxy envs, see readme for more info
+  #     PROXY_LOCATION: pihole
+  #     VIRTUAL_HOST: pihole.yourdomain.local
+  #     VIRTUAL_PORT: 80
+  #   # Add your own custom hostnames you need for your domain
+  #   extra_hosts:
+  #     #   Point any of the jwilder virtual_host addresses
+  #     # to your docker host ip address
+  #     - 'pihole.yourdomain.local:192.168.1.55'
+  #   volumes:
+  #     - ~/docker/pihole:/etc/pihole
+  #     # - '/etc/pihole/:/etc/pihole/'
+  #     # WARNING: if this log don't exist as a file on the host already
+  #     # docker will try to create a directory in it's place making for lots of errors
+  #     # - '/var/log/pihole.log:/var/log/pihole.log'
+  #   restart: always
+
+  # tor: # https://hub.docker.com/r/osminogin/tor-simple/
+  #   image: osminogin/tor-simple
+  #   links:
+  #     - nginx:myservice
+  #   container_name: tor
+  #   restart: unless_stopped
+  #   depends_on: XXXXX
+  #   ports:
+  #     - 9050:9050
+  #   volumes:
+  #     - tor:/tor
+
+  # facebox:
+  #   image: machinebox/facebox
+  #   container_name: facebox
+  #   restart: unless-stopped
+  #   ports:
+  #     - 8081:8080
+  #   environment:
+  #     - MB_KEY=*****YOUR_FACEBOX_KEY*****
+
+# for docker-compose v3.4 https://github.com/dperson/samba/blob/master/docker-compose.yml
+#  samba:
+#    image: dperson/samba
+#    environment:
+#      TZ: 'EST5EDT'
+#    networks:
+#      - default
+#    read_only: true
+#    tmpfs:
+#      - /tmp
+#    restart: unless-stopped
+#    stdin_open: true
+#    tty: true
+#    volumes:
+#      - /mnt:/mnt:z
+#    command: '-s "Mount;/mnt"'
+  #
+  # networks:
+  #   default:
