@@ -9,12 +9,12 @@ class NotifyTasker(hass.Hass):
 
     def initialize(self):
 
-    self.entities = [
-        self.args['entityID']
-        ]
+        self.entities = [
+            self.args['entityID']
+            ]
 
-    for entity in self.entities:
-        self.listen_state(self.reportState, entity)
+        for entity in self.entities:
+            self.listen_state(self.reportState, entity)
 
     def reportState (self, entity, attribute, old, new, kwargs):
 
